@@ -2,10 +2,12 @@ import os
 
 import rope.base.change
 from rope.base import libutils, utils, exceptions
+from Pymacs import lisp
 from rope.contrib import codeassist, generate, autoimport, findit
 
 from ropemode import refactor, decorators, dialog
 
+location_stack = []                       # global
 
 class RopeMode(object):
 
@@ -137,14 +139,34 @@ class RopeMode(object):
             refactor.runtask(self.env, redo, 'Redo refactoring',
                              interrupts=False)
 
-    @decorators.local_command('a g', shortcut='C-c g')
-    def goto_definition(self):
+    def _goto_definition(self, other=False):
         definition = self._base_definition_location()
         if definition:
-            self.env.push_mark()
-            self._goto_location(definition[0], definition[1])
+            location_stack[-8:-1]              # only keep 8
+                                                    # push current location
+            location_stack.append(self._get_location())
+            self.env.message('offset is %s' % definition[1])
+            # self.env.push_mark()
+            self._goto_location(definition[0], definition[1], other=other)
         else:
             self.env.message('Cannot find the definition!')
+
+    @decorators.local_command()
+    def goto_definition(self):
+        self._goto_definition()
+
+    @decorators.local_command()
+    def pop_definition_stack(self):
+        if len(location_stack) == 0:
+            self.env.message('Stack is empty')
+        else:
+            location = location_stack.pop();
+            self._goto_location(location[0], point=location[1],
+                                other=False, lineno=None);
+
+    @decorators.local_command()
+    def goto_definition_other_window(self):
+        self._goto_definition(True)
 
     @decorators.local_command()
     def definition_location(self):
@@ -411,10 +433,12 @@ class RopeMode(object):
             if resource:
                 self.env.find_file(resource.real_path)
 
-    def _goto_location(self, resource, lineno):
+    def _goto_location(self, resource, lineno, point=None, other=False):
         if resource:
             self.env.find_file(str(resource.real_path),
-                               resource.project != self.project)
+                               resource.project != self.project, other=other)
+        if point:
+            lisp.goto_char(point)
         if lineno:
             self.env.goto_line(lineno)
 
@@ -442,10 +466,7 @@ class RopeMode(object):
 
     def _check_project(self):
         if self.project is None:
-            if self.env.get('guess_project'):
-                self.open_project(self._guess_project())
-            else:
-                self.open_project()
+            self.open_project(self._guess_project())
         else:
             self.project.validate(self.project.root)
 
@@ -453,7 +474,7 @@ class RopeMode(object):
         cwd = self.env.filename()
         if cwd is not None:
             while True:
-                ropefolder = os.path.join(cwd, '.ropeproject')
+                ropefolder = os.path.join(cwd, '.git')
                 if os.path.exists(ropefolder) and os.path.isdir(ropefolder):
                     return cwd
                 newcwd = os.path.dirname(cwd)
